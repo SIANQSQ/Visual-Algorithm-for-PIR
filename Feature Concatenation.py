@@ -494,7 +494,7 @@ def resize_image(image, max_width=1200):
         return cv2.resize(image, (new_width, new_height))
     return image
 
-def show_images_with_opencv(images, titles, window_name="图像拼接结果", max_width=1200):
+def show_images_with_opencv(images, titles, window_name="result", max_width=1200):
     """使用OpenCV显示图像"""
     if not images:
         print("没有图像可显示")
@@ -623,21 +623,21 @@ def main():
     if result_horizontal is not None:
         result_horizontal_clean = remove_duplicate_overlap(result_horizontal)
         results.append(result_horizontal_clean)
-        titles.append("水平拼接")
+        titles.append("Horizontal")
         cv2.imwrite("stitched_horizontal.jpg", result_horizontal_clean)
         print(f"水平拼接结果已保存为: stitched_horizontal.jpg, 尺寸: {result_horizontal_clean.shape}")
     
     if result_sequential is not None:
         result_sequential_clean = remove_duplicate_overlap(result_sequential)
         results.append(result_sequential_clean)
-        titles.append("顺序拼接")
+        titles.append("Sequential")
         #cv2.imwrite("stitched_sequential.jpg", result_sequential_clean)
         print(f"顺序拼接结果已保存为: stitched_sequential.jpg, 尺寸: {result_sequential_clean.shape}")
     
     if result_global is not None:
         result_global_clean = remove_duplicate_overlap(result_global)
         results.append(result_global_clean)
-        titles.append("全局拼接")
+        titles.append("Global")
         cv2.imwrite("stitched_global.jpg", result_global_clean)
         print(f"全局拼接结果已保存为: stitched_global.jpg, 尺寸: {result_global_clean.shape}")
     
