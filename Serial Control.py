@@ -8,6 +8,12 @@ import sys
 import os
 from typing import Optional
 
+'''图像拼接处理部分'''
+
+
+
+
+
 class MultiThreadCameraApp:
     def __init__(self):
         # 串口相关变量
@@ -68,17 +74,34 @@ class MultiThreadCameraApp:
                     if self.serial_port.in_waiting > 0:
                         data = self.serial_port.read(self.serial_port.in_waiting)
                         if data:
-                            # 打印接收到的数据
-                            received_str = data.decode('utf-8', errors='ignore').strip()
-                            if received_str=="1":
-                                print(f"[收到拍摄指令] {received_str}")
-                                self.capture_image(trigger_source="Serial",file_name=str(self.num+1))
-                                self.num += 1
+                            # 如果接收到严格4字节的数据包，按协议解析第2、3字节为 int16_t（有符号）
+                            if len(data) == 4:
+                                try:
+                                    # 默认使用 little-endian（如需 big-endian，请改为 'big'）
+                                    int16_val = self.parse_4byte_packet(data, byteorder='little')
+                                    print(f"[串口4字节包] raw={data.hex()} int16={int16_val}")
+                                except Exception as e:
+                                    print(f"4字节包解析错误: {e}")
+                            else:
+                                # 兼容原有的基于文本的数据处理逻辑（例如收到 "1" 触发拍照）
+                                try:
+                                    received_str = data.decode('utf-8', errors='ignore').strip()
+                                except Exception:
+                                    received_str = ''
+
+                                if received_str == "1":
+                                    print(f"[收到拍摄指令] {received_str}")
+                                    self.capture_image(trigger_source="Serial", file_name=str(self.num+1))
+                                    self.num += 1
+
                             time.sleep(1)
 
-                            # 发送相同的数据回串口
-                            self.serial_port.write(("ok").encode('utf-8'))
-                            print(f"[串口发送] 已回发2")
+                            # 发送确认回发（保持原有行为）
+                            try:
+                                self.serial_port.write(("ok").encode('utf-8'))
+                                print(f"[串口发送] 已回发 ok")
+                            except Exception as e:
+                                print(f"串口回发失败: {e}")
                 
                 time.sleep(0.1)  # 避免CPU占用过高
                 
@@ -91,6 +114,28 @@ class MultiThreadCameraApp:
             self.serial_port.close()
         print("串口监听线程已停止")
 
+    def parse_4_packclass(self, packet: bytes, byteorder: str = 'little') -> int:
+        if not isinstance(packet, (bytes, bytearray)):
+            raise TypeError('解析距离出错:数据包必须为 bytes 或 bytearray')
+        if len(packet) != 4:
+            raise ValueError('解析距离出错:数据包长度必须为4字节')
+        return int.from_bytes(packet[0:1], byteorder=byteorder, signed=True)
+    
+    def parse_4_diatance(self, packet: bytes, byteorder: str = 'little') -> int:
+        if not isinstance(packet, (bytes, bytearray)):
+            raise TypeError('解析距离出错:数据包必须为 bytes 或 bytearray')
+        if len(packet) != 4:
+            raise ValueError('解析距离出错:数据包长度必须为4字节')
+        return int.from_bytes(packet[1:3], byteorder=byteorder, signed=True)
+
+    def parse_4_shotnum(self, packet: bytes, byteorder: str = 'little') -> int:
+        if not isinstance(packet, (bytes, bytearray)):
+            raise TypeError('解析距离出错:数据包必须为 bytes 或 bytearray')
+        if len(packet) != 4:
+            raise ValueError('解析距离出错:数据包长度必须为4字节')
+        return int.from_bytes(packet[3:4], byteorder=byteorder, signed=True)
+
+    
     def console_print_thread(self):
         """控制台打印线程 - 打印hello并控制摄像头拍摄"""
         print("控制台打印线程启动")
