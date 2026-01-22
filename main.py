@@ -29,7 +29,6 @@ import sys
 import os
 from typing import Optional
 
-import cv2
 import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional
@@ -642,7 +641,7 @@ class PIL_App:
         self.capture_count = 0
         
         # 照片计数
-        self.num = 0
+        self.horizon_num = 0 #水平拼接照片计数
         self.distance_list = [] #存储距离列表
         self.photonum_list = [] #存储拍摄数1-5
         # 线程控制
@@ -659,6 +658,7 @@ class PIL_App:
         self.camera_config = {
             'device_id': 0,  # 默认摄像头
             'save_dir': 'captures',
+            'horizontal_stitched_dir': 'stitched_horizontal',
             'prefix': 'capture'
         }
         
@@ -719,7 +719,7 @@ class PIL_App:
                                     PIL_Diatance = self.parse_4_diatance(data, byteorder='big')
                                     PIL_Shotnum = self.parse_4_shotnum(data, byteorder='little')
                                     print(f"[收到四字节数据包] raw={data.hex()} 数据类型={PIL_Pack_Class} 距离={PIL_Diatance} 拍摄序号={PIL_Shotnum}")
-                                    if(PIL_Diatance) not in self.distance_list:
+                                    if(PIL_Shotnum == 5):    # 如果收到拍摄序号5，表明一组拍摄完成，将距离信息加入distance_list，拼接线程检查到list里面有东西了，就拿5张照片去水平拼接
                                         self.distance_list.append(PIL_Diatance)
                                     self.photonum_list.append(PIL_Shotnum)    
                                     # 触发摄像头拍摄
@@ -739,54 +739,45 @@ class PIL_App:
         # 关闭串口
         if self.serial_port and self.serial_port.is_open:
             self.serial_port.close()
-        print("串口监听线程已停止")
+        print("[线程停止] 串口监听线程已停止")
 
     def photo_stiched_thread(self):
         """照片文件检测，实现每拍摄五张照片，加载进行拼接"""
         print("照片拼接线程启动")
         while self.running:
-            current_time = datetime.datetime.now().strftime("%H:%M:%S")
-            if(len(self.photonum_list)) == 5:
-                print("已经有5张照片,开始拼接")
-                self.photonum_list.clear()
-                distance_lable = self.distance_list[-1]
-                img_wait = load_images_by_distance('captures',distance_lable)
+            # current_time = datetime.datetime.now().strftime("%H:%M:%S") #时间戳
+
+            if(len(self.distance_list) > 0 and len(self.photonum_list) >=5):   #检测到有距离信息，且拍摄序号已经满5张
+                current_distance = self.distance_list[0]
+                self.distance_list.pop(0)  #取出距离信息后，删除第一个元素，避免重复使用
+                print("[照片拼接]接收到在{}距离拍摄的五张照片，开始拼接...".format(current_distance))
+                self.photonum_list.clear() #清空拍摄序号列表，准备下一组拍摄
+                img_wait = load_images_by_distance('captures', current_distance)
                 if len(img_wait) < 2:
-                    print("需要至少2张图像进行拼接")
+                    print("[拼接错误]需要至少2张图像进行拼接,发生在距离: {}处".format(current_distance))
                     return
 
-                print(f"成功加载 {len(img_wait)} 张图像")
-
-                print("\n" + "=" * 50)
-                print("预处理图像...")
-                processed_images = preprocess_images(img_wait)
-
-                stitcher = CylinderImageStitcher(min_matches=15, ransac_thresh=3.0)
-
-                print("\n" + "=" * 50)
-                print("执行全局拼接...")
+                print(f"[照片拼接]成功加载 {len(img_wait)} 张图像")
+                processed_images = preprocess_images(img_wait) #预处理图像
+                stitcher = CylinderImageStitcher(min_matches=15, ransac_thresh=3.0) #初始化拼接器
                 result_global = stitcher.stitch_all_pairs_fixed(processed_images)
-
-                print("\n" + "=" * 50)
-                print("去除重复区域...")
 
                 if result_global is not None:
                     result_global_clean = remove_duplicate_overlap(result_global)
-                    cv2.imwrite("stitched_result.jpg", result_global_clean)
-                    print(f"拼接结果已保存为: stitched_result.jpg")
-                    print(f"输出尺寸: {result_global_clean.shape}")
+                    filename = f"{self.horizon_num}_{current_distance}.jpg"
+                    filepath = os.path.join(self.camera_config['horizontal_stitched_dir'], filename)
 
-                    print("\n" + "=" * 50)
-                    print("显示拼接结果...")
+                    cv2.imwrite(filepath, result_global_clean)
+                    print(f"[水平拼接完成] 拼接结果已保存为: {filename}")
                     show_images_with_opencv([result_global_clean], ["拼接结果"], "拼接结果")
                 else:
                     print("拼接失败！")
             
-            print(f"[照片拼接] 等待拍摄照片")
-            print(self.distance_list)
-            print(self.photonum_list)
-            time.sleep(2)  # 每2秒运行一次
-        print("照片拼接线程已停止")
+            print(f"[照片拼接线程] 等待上位机指令...")
+            #print(self.distance_list)
+            #print(self.photonum_list)
+            time.sleep(1)  # 每2秒运行一次
+        print("[线程终止] 照片拼接线程已停止")
 
     # def camera_timer_thread(self):
     #     """定时拍摄线程 - 每10秒拍摄一次"""
@@ -818,7 +809,7 @@ class PIL_App:
                 if self.camera is None:
                     self.camera = cv2.VideoCapture(self.camera_config['device_id'])
                     if not self.camera.isOpened():
-                        print("无法打开摄像头")
+                        print("[错误] 无法打开摄像头")
                         return
                 
                 # 读取一帧
@@ -877,8 +868,8 @@ class PIL_App:
         threads.append(serial_thread)
         
         # 线程2: 监测图片进行拼接
-        console_thread = threading.Thread(target=self.photo_stiched_thread, name="ConsoleThread")
-        threads.append(console_thread)
+        StitchThread = threading.Thread(target=self.photo_stiched_thread, name="StitchThread")
+        threads.append(StitchThread)
         
         # 线程3: 定时拍摄
         # camera_thread = threading.Thread(target=self.camera_timer_thread, name="CameraTimerThread")
