@@ -771,7 +771,7 @@ class PIL_App:
                     print(f"[水平拼接完成] 拼接结果已保存为: {filename}")
                     show_images_with_opencv([result_global_clean], ["拼接结果"], "拼接结果")
                 else:
-                    print("拼接失败！")
+                    print("[错误] 拼接失败！")
             
             print(f"[照片拼接线程] 等待上位机指令...")
             #print(self.distance_list)
@@ -895,11 +895,9 @@ def main():
     app = PIL_App()
     
     # 显示使用说明
-    print("\n使用说明:")
+    print("\n管道检修机器人上位机 使用说明:")
     print("1. 修改 serial_config 中的端口号以匹配您的串口设备")
-    print("2. 如果没有串口设备，程序将使用模拟模式")
-    print("3. 拍摄的图像将保存在 'captures' 文件夹中")
-    print("4. 确保摄像头设备可用")
+    print("2. 拍摄的图像将保存在 'captures' 文件夹中，水平拼接后的图像将保存在 'stitched_horizontal' 文件夹中")
     
     # 检查摄像头
     test_camera = cv2.VideoCapture(0)
