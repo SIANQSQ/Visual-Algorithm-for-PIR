@@ -17,6 +17,7 @@ Byte3:拍摄序号,从1开始计数,每组拍摄5张
 照片命名格式：
 距离_拍摄序号.jpg
 
+照片拍摄每周九张，进行顺序拼接；
 '''
 
 import threading
@@ -598,7 +599,7 @@ def load_images_by_distance(base_dir, image_distance, require_all=False):
             image_distance = str(image_distance)
     
             images = []
-            for i in range(1, 6):
+            for i in range(1, 10):
                 # 构建文件名
                 filename = f"{image_distance}_{i}.jpg"
                 filepath = os.path.join(base_dir, filename)
@@ -625,10 +626,52 @@ def load_images_by_distance(base_dir, image_distance, require_all=False):
 
         return images
 
+def load_horizontal_stitched_images(folder_path):
+    images = []
+    index = 1 # 初始从1开始编号
+    
+    while True:
+        # 查找当前序号的图片文件
+        found = False
+        for filename in os.listdir(folder_path):
+            if filename.startswith(f"{index}_") and filename.lower().endswith(".jpg"):
+                img = cv2.imread(os.path.join(folder_path, filename))
+                if img is not None:
+                    images.append(img)
+                    found = True
+                    index += 1
+                    break
+        if not found:
+            break
+    #print("加载照片数"+str(len(images)))
+    return images
+
+#简单图像拼接函数（水平机械拼接）
+def stitch_images_horizontal(images, output_path):
+    result = np.hstack(images)
+    cv2.imwrite(output_path, result)
+    print(f"[图像拼接输出]水平拼接完成，输出到 {output_path}")
+    return result
+
+#简单图像拼接函数（竖直机械拼接）
+def stitch_images_vertical(images, output_path):
+    images.reverse() # 倒序
+    result = np.vstack(images)
+    cv2.imwrite(output_path, result)
+    print(f"[图像拼接输出]竖直拼接完成，输出到 {output_path}")
+    return result
+
+def stitch_all_photos(output_path):
+    imgs = load_horizontal_stitched_images("stitched_horizontal/")
+    stitch_images_vertical(imgs, output_path)
+    return
 
 #主程序类
 class PIL_App:
     def __init__(self):
+        # 管道参数
+        self.barrel_length = 0
+        self.dist_packet = bytes([0x00, 0x00, 0x00, 0x00])
         # 串口相关变量
         self.serial_port: Optional[serial.Serial] = None
         self.serial_thread_running = False
@@ -642,14 +685,15 @@ class PIL_App:
         
         # 照片计数
         self.horizon_num = 0 #水平拼接照片计数
+        self.total_num = 9 #总数：每周需要拍摄的照片
         self.distance_list = [] #存储距离列表
-        self.photonum_list = [] #存储拍摄数1-5
+        self.photonum_list = [] #存储拍摄数1-total_num
         # 线程控制
         self.running = True
         
         # 串口配置 (根据您的实际情况修改)
         self.serial_config = {
-            'port': 'COM18',  # Windows: COM3, Linux: /dev/ttyUSB0
+            'port': 'COM17',  # Windows: COM3, Linux: /dev/ttyUSB0
             'baudrate': 115200,
             'timeout': 1
         }
@@ -667,28 +711,49 @@ class PIL_App:
             os.makedirs(self.camera_config['save_dir'])
 
     # 数据包解析函数
-    def parse_4_packclass(self, packet: bytes, byteorder: str = 'little') -> int:
+    def parse_4b_1(self, packet: bytes, byteorder: str = 'little') -> int:
         if not isinstance(packet, (bytes, bytearray)):
-            raise TypeError('解析距离出错:数据包必须为 bytes 或 bytearray')
+            raise TypeError('解析第1字节出错:数据包必须为 bytes 或 bytearray')
         if len(packet) != 4:
-            raise ValueError('解析距离出错:数据包长度必须为4字节')
+            raise ValueError('解析第1字节出错:数据包长度必须为4字节')
         return int.from_bytes(packet[0:1], byteorder=byteorder, signed=True)
     
-    def parse_4_diatance(self, packet: bytes, byteorder: str = 'big') -> int:
+    def parse_4b_2to3(self, packet: bytes, byteorder: str = 'big') -> int:
         if not isinstance(packet, (bytes, bytearray)):
-            raise TypeError('解析距离出错:数据包必须为 bytes 或 bytearray')
+            raise TypeError('解析2-3字节出错:数据包必须为 bytes 或 bytearray')
         if len(packet) != 4:
-            raise ValueError('解析距离出错:数据包长度必须为4字节')
+            raise ValueError('解析2-3字节出错:数据包长度必须为4字节')
         return int.from_bytes(packet[1:3], byteorder=byteorder, signed=True)
 
-    def parse_4_shotnum(self, packet: bytes, byteorder: str = 'little') -> int:
+    def parse_4b_4(self, packet: bytes, byteorder: str = 'little') -> int:
         if not isinstance(packet, (bytes, bytearray)):
-            raise TypeError('解析距离出错:数据包必须为 bytes 或 bytearray')
+            raise TypeError('解析第4字节出错:数据包必须为 bytes 或 bytearray')
         if len(packet) != 4:
-            raise ValueError('解析距离出错:数据包长度必须为4字节')
+            raise ValueError('解析第4字节出错:数据包长度必须为4字节')
         return int.from_bytes(packet[3:4], byteorder=byteorder, signed=True)
     
-    
+    def SendCommand(self,cmdstr):
+        if cmdstr == 'start':
+            self.serial_port.write(b'\x01\x00\x00\x00') #任务开始
+            print(f"[任务开始] 已发送 0x01")
+        elif cmdstr == 'shot_ok':
+            self.serial_port.write(b'\x02\x00\x00\x00') #确认拍摄
+            print(f"[拍摄确认] 已回发 0x02")
+        elif cmdstr == 'start':
+            self.serial_port.write(b'\x03\x00\x00\x00') #任务结束
+            print(f"[任务结束] 已回发 0x03")
+        elif cmdstr == 'go_back':
+            self.serial_port.write(b'\x04\x00\x00\x00') #返回起点
+            print(f"[返回起点] 已发送 0x04")
+        elif cmdstr == 'send_distance':
+            # 将整数转换为两个字节（高位在前，大端序）
+            high_byte = (self.barrel_length >> 8) & 0xFF  # 获取高8位
+            low_byte = self.barrel_length & 0xFF          # 获取低8位
+            self.dist_packet = bytes([0x05, high_byte, low_byte, 0x00])
+            self.serial_port.write(self.dist_packet) #设置管道长度
+            print(f"[设置管道长度] 已发送 {self.barrel_length}")
+        else :
+            print(f"[未知指令] 请校对后再输入")
 
     def serial_listener_thread(self):
         """串口监听线程 - 监听并发送相同数据"""
@@ -707,7 +772,24 @@ class PIL_App:
         
         self.serial_thread_running = True
         
-        while self.running and self.serial_thread_running:
+        if self.running and self.serial_thread_running:  #初始化，与下位机沟通管道参数
+            set_ok = False
+            while not set_ok:
+                try:
+                    self.SendCommand('send_distance')
+                    if self.serial_port.in_waiting > 0:
+                        data = self.serial_port.read(self.serial_port.in_waiting)
+                        if data == self.dist_packet:
+                            set_ok = True
+                            print("[初始化成功] 参数已设置")
+                except:
+                    print("[初始化错误] 请检查系统！")
+                time.sleep(1)
+        
+        self.SendCommand('start')
+        
+        shot_ok = False  #拍摄结束标志位
+        while self.running and self.serial_thread_running and not shot_ok:
             try:
                 if self.serial_port and self.serial_port.is_open:
                     if self.serial_port.in_waiting > 0:
@@ -715,25 +797,32 @@ class PIL_App:
                         if data:
                             if len(data) == 4:
                                 try:
-                                    PIL_Pack_Class = self.parse_4_packclass(data, byteorder='little')
-                                    PIL_Diatance = self.parse_4_diatance(data, byteorder='big')
-                                    PIL_Shotnum = self.parse_4_shotnum(data, byteorder='little')
-                                    print(f"[收到四字节数据包] raw={data.hex()} 数据类型={PIL_Pack_Class} 距离={PIL_Diatance} 拍摄序号={PIL_Shotnum}")
-                                    if(PIL_Shotnum == 5):    # 如果收到拍摄序号5，表明一组拍摄完成，将距离信息加入distance_list，拼接线程检查到list里面有东西了，就拿5张照片去水平拼接
-                                        self.distance_list.append(PIL_Diatance)
-                                    self.photonum_list.append(PIL_Shotnum)    
-                                    # 触发摄像头拍摄
-                                    if(PIL_Pack_Class==3):
+                                    PIL_Pack_Class = self.parse_4b_1(data, byteorder='little')
+                                    # 检查数据包类型
+                                    if(PIL_Pack_Class==3):  #是拍摄数据包
+                                        PIL_Diatance = self.parse_4b_2to3(data, byteorder='big')
+                                        PIL_Shotnum = self.parse_4b_4(data, byteorder='little')
+                                        # print(f"[收到四字节数据包] raw={data.hex()} 数据类型={PIL_Pack_Class} 距离={PIL_Diatance} 拍摄序号={PIL_Shotnum}")
                                         file_name = f"{PIL_Diatance}_{PIL_Shotnum}"
                                         self.capture_image(trigger_source="serial", file_name=file_name)
+                                        if(PIL_Shotnum == self.total_num):    # 如果收到拍摄序号9，表明一组拍摄完成，将距离信息加入distance_list，拼接线程检查到list里面有东西了，就拿5张照片去水平拼接
+                                            self.distance_list.append(PIL_Diatance)
+                                        self.photonum_list.append(PIL_Shotnum)  
+                                    elif(PIL_Pack_Class==6): #是停止数据包
+                                        #处理竖直拼接，得到结果
+                                        stitch_all_photos("unfolded view/result.jpg")
+                                        shot_ok = True
+                                        print("[任务完成] 拍摄任务已结束！！！")
+                                    
+                                        
                                 except Exception as e:
-                                    print(f"数据包解析错误: {e}")
+                                    print(f"[数据包解析错误]: {e}")
                             else:
                                 print(f"[收到错误数据] raw={data.hex()} 长度={len(data)}")
                 time.sleep(0.1)  
                 
             except Exception as e:
-                print(f"串口线程错误: {e}")
+                print(f"[串口线程错误]: {e}")
                 time.sleep(1)
         
         # 关闭串口
@@ -741,39 +830,46 @@ class PIL_App:
             self.serial_port.close()
         print("[线程停止] 串口监听线程已停止")
 
+
     def photo_stiched_thread(self):
         """照片文件检测，实现每拍摄五张照片，加载进行拼接"""
         print("照片拼接线程启动")
         while self.running:
             # current_time = datetime.datetime.now().strftime("%H:%M:%S") #时间戳
 
-            if(len(self.distance_list) > 0 and len(self.photonum_list) >=5):   #检测到有距离信息，且拍摄序号已经满5张
+            if(len(self.distance_list) > 0 and len(self.photonum_list) >=self.total_num):   #检测到有距离信息，且拍摄序号已经满5张
                 current_distance = self.distance_list[0]
                 self.distance_list.pop(0)  #取出距离信息后，删除第一个元素，避免重复使用
-                print("[照片拼接]接收到在{}距离拍摄的五张照片，开始拼接...".format(current_distance))
+                print("[照片拼接]接收到在{}距离拍摄的九张照片，开始拼接...".format(current_distance))
                 self.photonum_list.clear() #清空拍摄序号列表，准备下一组拍摄
                 img_wait = load_images_by_distance('captures', current_distance)
-                if len(img_wait) < 2:
-                    print("[拼接错误]需要至少2张图像进行拼接,发生在距离: {}处".format(current_distance))
+                if len(img_wait) < 9:
+                    print("[拼接错误]需要至少9张图像进行拼接,发生在距离: {}处".format(current_distance))
                     return
 
                 print(f"[照片拼接]成功加载 {len(img_wait)} 张图像")
-                processed_images = preprocess_images(img_wait) #预处理图像
-                stitcher = CylinderImageStitcher(min_matches=15, ransac_thresh=3.0) #初始化拼接器
-                result_global = stitcher.stitch_all_pairs_fixed(processed_images)
+                # 放弃基于机器学习的拼接方式，采用高精度简单机械拼接
+                # processed_images = preprocess_images(img_wait) #预处理图像
+                # stitcher = CylinderImageStitcher(min_matches=15, ransac_thresh=3.0) #初始化拼接器
+                # result_global = stitcher.stitch_all_pairs_fixed(processed_images)
 
-                if result_global is not None:
-                    result_global_clean = remove_duplicate_overlap(result_global)
-                    filename = f"{self.horizon_num}_{current_distance}.jpg"
-                    filepath = os.path.join(self.camera_config['horizontal_stitched_dir'], filename)
+                # if result_global is not None:
+                #     result_global_clean = remove_duplicate_overlap(result_global)
+                #     filename = f"{self.horizon_num}_{current_distance}.jpg"
+                #     filepath = os.path.join(self.camera_config['horizontal_stitched_dir'], filename)
 
-                    cv2.imwrite(filepath, result_global_clean)
-                    print(f"[水平拼接完成] 拼接结果已保存为: {filename}")
-                    show_images_with_opencv([result_global_clean], ["拼接结果"], "拼接结果")
-                else:
-                    print("[错误] 拼接失败！")
-            
-            print(f"[照片拼接线程] 等待上位机指令...")
+                #     cv2.imwrite(filepath, result_global_clean)
+                #     print(f"[水平拼接完成] 拼接结果已保存为: {filename}")
+                #     show_images_with_opencv([result_global_clean], ["拼接结果"], "拼接结果")
+                # else:
+                #     print("[错误] 拼接失败！")
+                self.horizon_num += 1
+                filename = f"{self.horizon_num}_{current_distance}.jpg"
+                filepath = os.path.join(self.camera_config['horizontal_stitched_dir'], filename)
+                stitch_images_horizontal(img_wait,filepath)
+                img_wait.clear()
+
+            print(f"[照片拼接线程] 等待图片拍摄...")
             #print(self.distance_list)
             #print(self.photonum_list)
             time.sleep(1)  # 每2秒运行一次
@@ -828,8 +924,7 @@ class PIL_App:
                     # cv2.waitKey(500)  # 显示500ms
                     # cv2.destroyAllWindows() 
                     try:
-                        self.serial_port.write(b'\x02') #确认拍摄
-                        print(f"[拍摄确认] 已回发 0x02")
+                        self.SendCommand('shot_ok')
                     except Exception as e:
                         print(f"[串口错误] 串口回发失败: {e}")
                                     
@@ -894,11 +989,13 @@ def main():
     """主函数"""
     app = PIL_App()
     
+    # 测试函数：
+    # stitch_all_photos("unfolded view/result.jpg")
     # 显示使用说明
     print("\n管道检修机器人上位机 使用说明:")
     print("1. 修改 serial_config 中的端口号以匹配您的串口设备")
     print("2. 拍摄的图像将保存在 'captures' 文件夹中，水平拼接后的图像将保存在 'stitched_horizontal' 文件夹中")
-    
+    print("3. 最终输出图像将保存在 'unfolded view' 文件夹中")
     # 检查摄像头
     test_camera = cv2.VideoCapture(0)
     if test_camera.isOpened():
@@ -907,6 +1004,9 @@ def main():
     else:
         print("⚠ 无法访问摄像头，请检查摄像头连接")
     
+    app.barrel_length = int(input("请输入管道长度(单位cm):"))
+    print("管道长度设置成功，当前长度为")
+    print(app.barrel_length)
     # 运行应用程序
     input("\n按 Enter 键开始运行...")
     app.run()
